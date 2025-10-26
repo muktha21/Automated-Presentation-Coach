@@ -2,17 +2,26 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Speech Analyzer</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-
-    
+    <title>Multi-Language Speech Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-<h2>Speech Analyzer</h2>
-<button onclick="startListening()">Start</button>
-<button onclick="stopListening()">Stop</button>
-<button onclick="generateReport()">Generate Report</button>
+<h2>Multi-Language Speech Analyzer</h2>
+
+<div class="language-selector">
+    <label for="language" id="languageLabel">Select Language:</label>
+    <select id="language" onchange="updateRecognitionLanguage()">
+        <option value="en-US">English</option>
+        <option value="te-IN">తెలుగు</option>
+        <option value="hi-IN">हिंदी</option>
+    </select>
+</div>
+<div class="controls">
+    <button onclick="startListening()" id="startButton">Start</button>
+    <button onclick="stopListening()" id="stopButton">Stop</button>
+    <button onclick="generateReport()" id="analyzeButton">Generate Report</button>
+</div>
 
 <h3>Live Transcript:</h3>
 <div id="transcript"></div>
@@ -24,6 +33,48 @@
     let recognition;
     let transcriptText = '';
     let lastTimestamp = 0;
+    let languageSegments = [];  // Track language changes
+
+    // Update UI text on page load
+    document.addEventListener('DOMContentLoaded', () => {
+        updateRecognitionLanguage();
+    });
+
+    async function updateRecognitionLanguage() {
+        const wasListening = recognition && recognition.isListening;
+        if (recognition) {
+            stopListening();
+        }
+
+        // Get the selected language code
+        const langSelect = document.getElementById('language');
+        const langCode = langSelect.value.split('-')[0];
+        console.log("Switching to language:", langSelect.value);
+        
+        try {
+            // Get the UI text for the selected language
+            const response = await fetch('/get_ui_text', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ language: langCode })
+            });
+            
+            const data = await response.json();
+            
+            // Update UI elements with the new language
+            document.getElementById('languageLabel').textContent = data.select_language;
+            document.getElementById('startButton').textContent = data.start_button;
+            document.getElementById('stopButton').textContent = data.stop_button;
+            document.getElementById('analyzeButton').textContent = data.analyze_button;
+
+            // Restart listening if it was active
+            if (recognition) {
+                startListening();
+            }
+        } catch (error) {
+            console.error('Error updating language:', error);
+        }
+    }
 
     function startListening() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -35,9 +86,11 @@
         recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = 'en-US';
-        transcriptText = '';
+        recognition.lang = document.getElementById('language').value;
+        recognition.isListening = true;
+        transcriptText = transcriptText || '';
         lastTimestamp = Date.now();
+        console.log("Starting recognition in language:", recognition.lang);
 
         recognition.onstart = () => console.log("Speech recognition started");
 
@@ -57,12 +110,26 @@
                 lastTimestamp = now;
 
                 if (event.results[i].isFinal) {
+                    const currentLang = document.getElementById('language').value;
+                    const segment = {
+                        text: result + ' ',
+                        language: currentLang,
+                        timestamp: Date.now()
+                    };
+                    languageSegments.push(segment);
                     transcriptText += result + ' ';
+                    console.log("Updated transcript:", transcriptText);
+                    console.log("Language segment added:", segment);
                 } else {
                     interimTranscript += result;
                 }
             }
-            document.getElementById('transcript').innerText = transcriptText + interimTranscript;
+            
+            // Update the display with language indicators
+            const displayText = transcriptText + interimTranscript;
+            const transcriptDiv = document.getElementById('transcript');
+            transcriptDiv.innerHTML = displayText;
+            console.log("Current display text:", displayText);
         };
 
         recognition.start();
@@ -71,40 +138,98 @@
     function stopListening() {
         if (recognition) {
             recognition.stop();
+            recognition.isListening = false;
             console.log("Speech recognition stopped");
         }
     }
 
     function generateReport() {
-        if (!transcriptText.trim()) {
+        console.log("Generate report called");
+        // Check if we have any transcript text
+        if (!transcriptText || !transcriptText.trim()) {
+            console.log("No transcript text available");
             alert("Please speak something first.");
             return;
         }
-
+        console.log("Sending analysis request with transcript:", transcriptText.trim());
+        
+        // Make sure the request is properly formatted
+        const requestData = {
+            transcript: transcriptText.trim(),
+            language: document.getElementById('language').value.split('-')[0],
+            languageSegments: languageSegments
+        };
+        console.log("Request data:", requestData);
+        
         fetch('/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transcript: transcriptText.trim() })
+            body: JSON.stringify(requestData)
         })
         .then(res => res.json())
         .then(data => {
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+
             const report = `
-                <b>Transcript:</b><br>${data.transcript}<br><br>
-                <b>Filler Words:</b> ${data.filler_words_found.join(', ') || 'None'}<br>
-                <b>Total Fillers:</b> ${data.total_fillers}<br>
-                <b>Pauses :</b> ${data.pause_count}<br>
-                <b>Fluency:</b> ${data.fluency}<br>
-                <b>Structure:</b> ${data.structure_feedback}<br>
-                <b>Confidence:</b> ${data.confidence}<br><br>
-                <b>Grammar Issues:</b><ul>
-                    ${data.grammar_issues.map(issue => `<li>${issue.message}<br><i>${issue.sentence}</i></li>`).join('')}
-                </ul>
+                <div class="report-section">
+                    <h4>${data.templates.analysis_summary}</h4>
+                    <div class="info-row">
+                        <div class="confidence-feedback">${data.confidence_feedback}</div>
+                    </div>
+                    <div class="confidence-score">
+                        <div class="score-circle" style="--score: ${data.confidence_score}">
+                            <span>${data.confidence_score}%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="report-section">
+                    <h4>${data.templates.speech_markers}</h4>
+                    <div class="markers">
+                        <div class="marker">
+                            <span>${data.templates.hesitations}: ${data.confidence_markers.hesitations}</span>
+                        </div>
+                        <div class="marker">
+                            <span>${data.templates.repetitions}: ${data.confidence_markers.repetitions}</span>
+                        </div>
+                        <div class="marker">
+                            <span>${data.templates.filler_count}: ${data.confidence_markers.filler_words}</span>
+                        </div>
+                    </div>
+                </div>
+
+                ${data.low_confidence_segments.length > 0 ? `
+                    <div class="report-section">
+                        <h4>${data.templates.areas_to_improve}</h4>
+                        <div class="segments">
+                            ${data.low_confidence_segments.map(segment => `
+                                <div class="segment">
+                                    <p class="text">"${segment.text}"</p>
+                                    <p class="confidence">${Math.round(segment.confidence * 100)}%</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${data.recommendations.length > 0 ? `
+                    <div class="report-section">
+                        <h4>${data.templates.recommendations}</h4>
+                        <ul class="recommendations">
+                            ${data.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
             `;
             document.getElementById('report').innerHTML = report;
         })
         .catch(err => {
             console.error("Error fetching report:", err);
-            alert("Failed to analyze. See console.");
+            alert("Failed to analyze. Please check the browser console for details.");
+            console.error("Full error details:", err);
         });
     }
 </script>
