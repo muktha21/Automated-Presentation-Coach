@@ -14,3 +14,6 @@ AI based evaluation tool for speech practice
 - Backend (Flask) runs per-segment, language-specific analysis using filler lists and regex markers.
 - Compute per-segment confidence; aggregate to overall score and select dominant language for templates.
 - Return localized analysis summary, marker counts, flagged low-confidence segments (with language), and recommendations.
+
+The link to my updated site
+https://confidencecoach-4z4q4sxpd-bala-ji1045s-projects.vercel.app/
